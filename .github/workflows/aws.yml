@@ -1,0 +1,177 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Deployment-Ecs
+
+# Controls when the workflow will run
+on:
+  push:
+    branches:
+      - master
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    outputs: 
+      image: ${{ steps.build-image.outputs.image }}
+    strategy:
+      matrix:
+        python-version: [3.8]
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # check out
+      - uses: actions/checkout@v2
+      # set aws credentials and registry
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-2
+      - name: Amazon ECR "Login" Action for GitHub Actions
+        uses: aws-actions/amazon-ecr-login@v1
+        id: login-ecr
+      # set env
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+          
+      # test
+      - name: Install dependencies
+        run: make install-test 
+      - name: Test the code
+        run: make test
+        
+      # build container  
+      - name: Build, tag, and push 
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: image-repo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Build a docker container and
+          # push it to ECR so that it can
+          # be deployed to ECS.
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          
+  analyze:
+    needs: build
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'python' ]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      
+    # dependency analysis
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v1
+      with:
+        languages: ${{ matrix.language }}
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v1
+
+    # set aws credentials and registry
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-west-2
+    - name: Amazon ECR "Login" Action for GitHub Actions
+      uses: aws-actions/amazon-ecr-login@v1
+      id: login-ecr
+    - name: Scan image
+      uses: anchore/scan-action@v2
+      with:
+       image: 638559788447.dkr.ecr.eu-west-2.amazonaws.com/image-repo:${{ github.sha }}
+       
+  deploy-to-test:
+    runs-on: ubuntu-latest
+    needs: [build]
+    environment: test
+    steps:
+      # check out
+      - uses: actions/checkout@v2
+      # set aws credentials and registry
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-2
+          
+      - name: Amazon ECR "Login" Action for GitHub Actions
+        uses: aws-actions/amazon-ecr-login@v1
+        id: login-ecr
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ecs-devops-sandbox
+          image: 638559788447.dkr.ecr.eu-west-2.amazonaws.com/image-repo:${{ github.sha }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ecs-service-test
+          cluster: ecs-devops-sandbox-test-cluster
+          wait-for-service-stability: false
+          
+  deploy-to-prod:
+    runs-on: ubuntu-latest
+    needs: [deploy-to-test,build]
+    steps:
+      # check out
+      - uses: actions/checkout@v2
+      # set aws credentials and registry
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-2
+          
+      - name: Amazon ECR "Login" Action for GitHub Actions
+        uses: aws-actions/amazon-ecr-login@v1
+        id: login-ecr
+          
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ecs-devops-sandbox
+          image: 638559788447.dkr.ecr.eu-west-2.amazonaws.com/image-repo:${{ github.sha }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ecs-service
+          cluster: ecs-devops-sandbox-cluster
+          wait-for-service-stability: false
+    
+    
+
+      
+

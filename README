@@ -1,0 +1,27 @@
+Tech Stack:
+Github actions - build, ci, cd, test, devsec
+Docker
+ECS Fargate
+ECR - image repository
+CDK, cloudfront
+Simple makefile for testing purposes
+
+For this project I wrote a simple python web app and dockerized it and deployed the application to the test and prod ECS environments. For iac I used cdk because I was already familiar with terraform and wanted to learn cdk through this project and writing IaC with python instead of HCL seemed interesting.
+
+For the CI/CD pipeline I used github actions because it has tight integration with aws and has similar syntax to ansible which i am quite familiar with. I also stored app secrets inside the repo via Github Secrets.
+
+CI flow:
+build:
+test the code and build the application.
+analyze:
+application dependency scanning and container scanning with anchore. I also would add OWASP ZAP scan if I made the app publicly available.
+deploy-to-dev:
+deploy the app to the dev ECS environment without approval
+deploy-to-prod:
+deploy the app to prod WITH approval.
+
+Further considerations if I was furher working on the pipeline:
+Rollback
+Branches (feature, hotfix, release)
+Deployment strategies
+certificate lifecycle
