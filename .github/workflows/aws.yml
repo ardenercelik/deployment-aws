@@ -139,6 +139,7 @@ jobs:
           
   deploy-to-prod:
     runs-on: ubuntu-latest
+    environment: prod
     needs: [deploy-to-test,build]
     steps:
       # check out
